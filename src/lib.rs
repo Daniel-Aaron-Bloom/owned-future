@@ -3,10 +3,12 @@
 //!
 //! # Motivation
 //!
-//! Take [`tokio::sync::Notify`] as an example. It's often useful to call [`Notify::notified`] from
-//! the main thread and then pass it to a spawned thread. Doing this guarantees the resulting
-//! [`Notified`] is watching for calls to [`Notify::notify_waiters`] prior to the thread being
-//! spawned. However this isn't possible with as `notified` borrows the `Notify`.
+//! Take [`tokio::sync::Notify`] as an example. A common paradigm is to call [`Notify::notified`]
+//! before a relevant threading update/check, then perform the update/check, and then wait on the
+//! resulting [`Notified`] future. Doing this guarantees the `Notified` is watching for calls to
+//! [`Notify::notify_waiters`] prior to the update/check. This paradigm would be useful when dealing
+//! with thread spawning (i.e. calling `notified` and moving the resulting future into the thread),
+//! but this isn't possible with `notified` as it borrows the `Notify`.
 //!
 //! ```compile_fail
 //! use std::sync::Arc;
@@ -16,24 +18,28 @@
 //!
 //! // Spawn a thread that waits to be notified
 //! {
+//!     // Copy the Arc
 //!     let notify = notify.clone();
+//!
 //!     // Start listening before we spawn
 //!     let notified = notify.notified();
+//!
+//!     // Spawn the thread
 //!     tokio::spawn(async move {
-//!         // wait for our listen to complete
+//!         // Wait for our listen to complete
 //!         notified.await; // <-- fails because we can't move `notified`
 //!     });
 //! }
 //!
-//! // notify the waiting threads
+//! // Notify the waiting threads
 //! notify.notify_waiters();
 //! ```
 //!
-//! At present, there's no way to do this kind of borrow and then move, and while there are many
+//! At present, there's no easy way to do this kind of borrow-then-move. While there are many
 //! crates available to help turn this problem into a self-borrowing one, those solutions require
 //! `unsafe` code with complicated covariance implications. This crate is instead able to solve this
-//! simple case with no `unsafe`, and only 1-2 lines of `unsafe` code for more complex cases with no
-//! covariance problems. Here is the solution to the above problem:
+//! simple case with no `unsafe`, and more complex cases are solved with only 1-2 lines of `unsafe`
+//! code with no covariance meddling. Here is the solution to the above problem:
 //!
 //!
 //! ```
@@ -43,15 +49,22 @@
 //! use tokio::sync::Notify;
 //! use owned_future::make;
 //!
+//! // Make the constructor for our future
+//! let get_notified = owned_future::get!(fn(n: &mut Arc<Notify>) -> () {
+//!     n.notified()
+//! });
+//!
 //! let notify = Arc::new(Notify::new());
 //!
 //! // Spawn a thread that waits to be notified
 //! {
+//!     // Copy the Arc
+//!     let notify = notify.clone();
+//!
 //!     // Start listening before we spawn
-//!     let get_notified = owned_future::get!(fn(n: &mut Arc<Notify>) -> () {
-//!         n.notified()
-//!     });
-//!     let notified = make(notify.clone(), get_notified);
+//!     let notified = make(notify, get_notified);
+//!
+//!     // Spawn the thread
 //!     tokio::spawn(async move {
 //!         // wait for our listen to complete
 //!         notified.await;
@@ -65,12 +78,17 @@
 //!
 //! # Technical Details
 //!
-//! So how does this work exactly? Well, while rust usually doesn't let you move a borrowed value,
-//! there's one exception. Pinned futures. Once `async` code has been transformed into a `Pin`ed
-//! future, it can invoke the borrow operation, but still be freely moved around. Essentially what
-//! this crate does is a prettied up version of this:
+//! So how does this work exactly? Rust doesn't usually let you move a borrowed value, but there's
+//! one exception. Pinned `async` blocks. Once a value has been moved into an `async` block, and the
+//! the block has been transformed into a `Pin`ned `Future`, during the execution of the future, the
+//! borrow can be executed, but the pointer anchoring the future can still be freely moved around.
+//! All that may sound a little confusing, but essentially what this crate does is a prettied up
+//! version of this:
 //!
 //! ```skip
+//! // Copy the Arc
+//! let notify = notify.clone();
+//!
 //! let mut wrapped_notified = Box::pin(async move {
 //!     let notified = notify.notified();
 //!
@@ -80,17 +98,22 @@
 //!     future.await
 //! });
 //!
-//! // Drive the future up to just past our `force_pause`
+//! // Drive the future up to just past our `force_pause`.
+//! // This will start listening before we spawn
 //! wrapped_notified.poll_once()
 //!
+//! // Spawn the thread
 //! tokio::spawn(async move {
 //!     // wait for our listen to complete
 //!     wrapped_notified.await;
 //! });
+//!
+//! // notify the waiting threads
+//! notify.notify_waiters();
 //! ```
 //!
 //! The more complex wrappers have a little bit more machinery to handle auxiliary values and
-//! errors, and the `Async*` helpers need a little bit of pin-projection and poll handling, but
+//! errors, and the `Async*` helpers do a little bit of pin-projection and poll handling, but
 //! ultimately the core logic boils down to something like the above.
 //!
 //! [`tokio::sync::Notify`]: https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html

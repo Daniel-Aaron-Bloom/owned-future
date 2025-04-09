@@ -26,7 +26,16 @@ impl Future for PollOnce {
     }
 }
 
-/// Encapsulate a borrowed future along with it's owner
+/// Encapsulate a borrowed-future along with it's owner.
+///
+/// This function takes the owner by value and a functor-like [`GetFut`], which when invoked will
+/// return a borrowed-future.'
+///
+/// The future returned by this function takes ownership of the owner, and will `.await` the
+/// borrowed-future when polled.
+///
+/// Callers may wish to use [`crate::get`] to quickly construct this functor for cases which don't
+/// require capturing, but any type which implements `GetFut` will work.
 #[deny(unsafe_code)]
 pub fn make<G>(val: G::Input, getter: G) -> Pin<Box<impl Future<Output = G::Output>>>
 where
@@ -45,7 +54,18 @@ where
     future
 }
 
-/// Try to encapsulate a borrowed future along with it's owner
+/// Try to encapsulate a borrowed-future along with it's owner.
+///
+/// This function takes the owner by value and a functor-like [`TryGetFut`], which when invoked will
+/// return a borrowed-future.
+///
+/// In the case that functor returns an error, this function will return that error along with the
+/// owner. When the functor return a borrowed-future, this function returns a future which has taken
+/// ownership of the owner, and will `.await` the borrowed-future when polled. Auxiliary data
+/// returned by the functor is also returned in this case.
+///
+/// Callers may wish to use [`crate::try_get`] to quickly construct this functor for cases which
+/// don't require capturing, but any type which implements `TryGetFut` will work.
 pub fn try_make<G>(
     val: G::Input,
     getter: G,
@@ -122,7 +142,24 @@ mod async_feature {
     }
 
     pin_project! {
-        /// Try to encapsulate an async borrowed future along with it's owner
+        /// Try to encapsulate an `async`-constructed borrowed-future along with it's owner.
+        ///
+        /// This struct only works with `!Send` futures. If you're working with `Send`-futures,
+        /// try using [`AsyncSendTry`].
+        ///
+        /// This struct can be constructed by passing to [`Self::new`] the owner by value and a
+        /// functor-like [`AsyncTryGetFut`], which when invoked will return a borrowed-future.'
+        ///
+        /// In contrast to the method helpers in this crate, this structure is a future which must
+        /// be polled in order to acquire the owned-future. Polling this future will first poll the
+        /// functor until it results in either an error, in which case this future will yield that
+        /// same error along with the owner, or a borrowed-future, in which ase this future will
+        /// yield a future which has taken ownership of the owner, and will `.await` the borrowed
+        /// future when polled. Auxiliary data returned by the functor is also yielded in this case.
+        ///
+        /// Callers may wish to use [`crate::async_try_get`] to quickly construct the functor for
+        /// cases which don't require capturing, but any type which implements `AsyncTryGetFut` will
+        /// work.
         pub struct AsyncTry<'a, G: AsyncTryGetFut<'a>> {
             result: Option<Result<G::Aux, (G::Input, G::Error)>>,
             future: AsyncTryMakeFuture<'a, G>
@@ -130,6 +167,7 @@ mod async_feature {
     }
 
     impl<'a, G: AsyncTryGetFut<'a>> AsyncTry<'a, G> {
+        /// Construct the `AsyncTry` from an owner and a borrowed-future functor
         pub fn new(val: G::Input, getter: G) -> Self {
             Self {
                 result: None,
@@ -223,7 +261,24 @@ mod async_feature {
     }
 
     pin_project! {
-        /// Try to encapsulate an async borrowed future along with it's owner
+        /// Try to encapsulate an `async`-constructed borrowed-future along with it's owner.
+        ///
+        /// This struct only works with `Send` futures. If you're working with `!Send`-futures,
+        /// try using [`AsyncTry`].
+        ///
+        /// This struct can be constructed by passing to [`Self::new`] the owner by value and a
+        /// functor-like [`AsyncSendTryGetFut`], which when invoked will return a borrowed-future.'
+        ///
+        /// In contrast to the method helpers in this crate, this structure is a future which must
+        /// be polled in order to acquire the owned-future. Polling this future will first poll the
+        /// functor until it results in either an error, in which case this future will yield that
+        /// same error along with the owner, or a borrowed-future, in which ase this future will
+        /// yield a future which has taken ownership of the owner, and will `.await` the borrowed
+        /// future when polled. Auxiliary data returned by the functor is also yielded in this case.
+        ///
+        /// Callers may wish to use [`crate::async_send_try_get`] to quickly construct the functor
+        /// for cases which don't require capturing, but any type which implements `AsyncTryGetFut`
+        /// will work.
         pub struct AsyncSendTry<'a, G: AsyncSendTryGetFut<'a>> {
             result: Option<Result<G::Aux, (G::Input, G::Error)>>,
             future: AsyncSendTryMakeFuture<'a, G>
@@ -239,7 +294,7 @@ mod async_feature {
         }
     }
 
-    /// An alias for the output type of [`AsyncTry`]
+    /// An alias for the output type of [`AsyncSendTry`]
     ///
     /// This will stop being `Box<dyn _>` once either `type_alias_impl_trait` or
     /// `impl_trait_in_assoc_type` stabilize
