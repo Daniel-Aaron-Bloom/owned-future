@@ -1,0 +1,21 @@
+[package]
+name = "owned-future"
+version = "0.1.0"
+authors = ["Daniel Bloom"]
+edition = "2024"
+rust-version = "1.85"
+description = "Turn borrowed futures into owned futures"
+repository = "https://github.com/Daniel-Aaron-Bloom/owned-future"
+license = "MIT"
+keywords = ["no_std", "async", "utilities", "utils"]
+categories = ["no-std", "rust-patterns", "memory-management", "asynchronous"]
+
+[dependencies]
+pin-project-lite = { version = "0.2.16", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"]}
+
+[features]
+default = ["async"]
+async = ["pin-project-lite"]
